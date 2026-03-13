@@ -1,9 +1,13 @@
 """Async SQLAlchemy database setup with SQLite."""
 
+import os
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL = "sqlite+aiosqlite:///./call_center.db"
+IS_VERCEL = os.getenv("VERCEL", "") == "1"
+_db_path = "/tmp/call_center.db" if IS_VERCEL else "./call_center.db"
+DATABASE_URL = f"sqlite+aiosqlite:///{_db_path}"
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

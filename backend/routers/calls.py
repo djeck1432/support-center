@@ -9,7 +9,8 @@ from sqlalchemy.orm import selectinload
 
 from database import get_db
 from models import Call, CallMessage
-from schemas import CallCreate, CallDetailOut, CallOut, DashboardStats
+from schemas import AIResponse, CallCreate, CallDetailOut, CallOut, ChatMessageIn, DashboardStats
+from services.ai_service import analyze_and_respond
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])
 
@@ -106,6 +107,59 @@ async def get_call(call_id: int, db: AsyncSession = Depends(get_db)) -> Call:
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
     return call
+
+
+@router.post("/{call_id}/message", response_model=AIResponse)
+async def send_message(
+    call_id: int,
+    payload: ChatMessageIn,
+    db: AsyncSession = Depends(get_db),
+) -> AIResponse:
+    """HTTP alternative to WebSocket for serverless environments (Vercel)."""
+    call = await db.get(Call, call_id)
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+
+    customer_text = payload.text.strip()
+    if not customer_text:
+        raise HTTPException(status_code=400, detail="Empty text")
+
+    db.add(CallMessage(
+        call_id=call_id,
+        role="customer",
+        content=customer_text,
+        timestamp=datetime.utcnow(),
+    ))
+    await db.commit()
+
+    ai_result = await analyze_and_respond(
+        db=db,
+        customer_text=customer_text,
+        conversation_history=payload.history or None,
+    )
+
+    ai_msg = CallMessage(
+        call_id=call_id,
+        role="ai",
+        content=ai_result["response"],
+        timestamp=datetime.utcnow(),
+        is_unresolved=ai_result["is_unresolved"],
+        matched_script_id=ai_result.get("matched_script_id"),
+    )
+    db.add(ai_msg)
+
+    if ai_result["is_unresolved"]:
+        call.is_resolved = False
+
+    await db.commit()
+
+    return AIResponse(
+        response=ai_result["response"],
+        matched_script_id=ai_result.get("matched_script_id"),
+        matched_script_title=ai_result.get("matched_script_title"),
+        confidence=ai_result["confidence"],
+        is_unresolved=ai_result["is_unresolved"],
+    )
 
 
 @router.patch("/{call_id}/end", response_model=CallOut)

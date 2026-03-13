@@ -76,3 +76,8 @@ class AIResponse(BaseModel):
     matched_script_title: str | None = None
     confidence: float
     is_unresolved: bool
+
+
+class ChatMessageIn(BaseModel):
+    text: str
+    history: list[dict[str, str]] = []

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, MicOff, PhoneCall, PhoneOff, Volume2 } from "lucide-react";
-import { callsApi, getWsUrl } from "../services/api";
-import { useWebSocket } from "../hooks/useWebSocket";
+import { Mic, MicOff, PhoneCall, PhoneOff, Volume2, Loader2 } from "lucide-react";
+import { callsApi } from "../services/api";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
 import { useSpeechSynthesis } from "../hooks/useSpeechSynthesis";
 import DialPad from "../components/DialPad";
@@ -16,21 +15,56 @@ interface ChatEntry {
 export default function CallInterface() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [activeCall, setActiveCall] = useState<Call | null>(null);
-  const [wsUrl, setWsUrl] = useState<string | null>(null);
   const [chatLog, setChatLog] = useState<ChatEntry[]>([]);
   const [textInput, setTextInput] = useState("");
+  const [sending, setSending] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const historyRef = useRef<{ role: string; content: string }[]>([]);
 
-  const { connected, sendMessage, lastResponse, error } = useWebSocket(wsUrl);
   const { speak, isSpeaking } = useSpeechSynthesis();
+
+  const sendToBackend = useCallback(
+    async (text: string) => {
+      if (!activeCall || sending) return;
+      setSending(true);
+      setChatLog((prev) => [...prev, { role: "customer", text }]);
+      historyRef.current.push({ role: "user", content: text });
+
+      try {
+        const res = await callsApi.sendMessage(
+          activeCall.id,
+          text,
+          historyRef.current.slice(0, -1),
+        );
+        const ai = res.data;
+        setChatLog((prev) => [
+          ...prev,
+          { role: "ai", text: ai.response, meta: ai },
+        ]);
+        historyRef.current.push({ role: "assistant", content: ai.response });
+        speak(ai.response);
+      } catch (err) {
+        console.error("Failed to send message:", err);
+        setChatLog((prev) => [
+          ...prev,
+          {
+            role: "ai",
+            text: "Sorry, something went wrong. Please try again.",
+            meta: { response: "", confidence: 0, is_unresolved: true, matched_script_id: null, matched_script_title: null },
+          },
+        ]);
+      } finally {
+        setSending(false);
+      }
+    },
+    [activeCall, sending, speak],
+  );
 
   const handleSpeechResult = useCallback(
     (text: string) => {
-      if (!connected) return;
-      setChatLog((prev) => [...prev, { role: "customer", text }]);
-      sendMessage(text);
+      sendToBackend(text);
     },
-    [connected, sendMessage],
+    [sendToBackend],
   );
 
   const {
@@ -42,16 +76,6 @@ export default function CallInterface() {
   } = useSpeechRecognition(handleSpeechResult);
 
   useEffect(() => {
-    if (lastResponse) {
-      setChatLog((prev) => [
-        ...prev,
-        { role: "ai", text: lastResponse.response, meta: lastResponse },
-      ]);
-      speak(lastResponse.response);
-    }
-  }, [lastResponse, speak]);
-
-  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatLog]);
 
@@ -60,8 +84,8 @@ export default function CallInterface() {
     try {
       const res = await callsApi.create(phoneNumber.trim());
       setActiveCall(res.data);
-      setWsUrl(getWsUrl(res.data.id));
       setChatLog([]);
+      historyRef.current = [];
     } catch (err) {
       console.error("Failed to start call:", err);
     }
@@ -76,14 +100,12 @@ export default function CallInterface() {
       console.error("Failed to end call:", err);
     }
     setActiveCall(null);
-    setWsUrl(null);
   };
 
   const sendTextManually = () => {
     const text = textInput.trim();
-    if (!text || !connected) return;
-    setChatLog((prev) => [...prev, { role: "customer", text }]);
-    sendMessage(text);
+    if (!text || !activeCall || sending) return;
+    sendToBackend(text);
     setTextInput("");
   };
 
@@ -117,16 +139,13 @@ export default function CallInterface() {
       <div className="flex items-center justify-between bg-white rounded-xl border border-slate-200 p-4">
         <div>
           <div className="flex items-center gap-2">
-            <span
-              className={`h-2.5 w-2.5 rounded-full ${connected ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`}
-            />
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <span className="font-mono font-medium text-slate-800">
               {activeCall.phone_number}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Call #{activeCall.id} &middot;{" "}
-            {connected ? "Connected" : "Connecting..."}
+            Call #{activeCall.id} &middot; Connected
           </p>
         </div>
         <button
@@ -137,12 +156,6 @@ export default function CallInterface() {
           End Call
         </button>
       </div>
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
-          {error}
-        </div>
-      )}
 
       <div className="bg-white rounded-xl border border-slate-200 h-[400px] flex flex-col">
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -171,7 +184,7 @@ export default function CallInterface() {
                 <p className="text-sm leading-relaxed">{entry.text}</p>
                 {entry.meta?.is_unresolved && (
                   <p className="text-xs mt-1 text-amber-600 font-medium">
-                    ⚠ Unresolved — flagged for review
+                    Unresolved -- flagged for review
                   </p>
                 )}
                 {entry.meta?.matched_script_title && (
@@ -183,6 +196,14 @@ export default function CallInterface() {
               </div>
             </div>
           ))}
+          {sending && (
+            <div className="flex justify-start">
+              <div className="rounded-2xl px-4 py-2.5 bg-slate-100 text-slate-500 rounded-bl-md">
+                <Loader2 size={16} className="animate-spin inline mr-2" />
+                <span className="text-sm">Thinking...</span>
+              </div>
+            </div>
+          )}
           {interimTranscript && (
             <div className="flex justify-end">
               <div className="max-w-[75%] rounded-2xl px-4 py-2.5 bg-emerald-100 text-emerald-700 rounded-br-md italic text-sm">
@@ -220,7 +241,7 @@ export default function CallInterface() {
           />
           <button
             onClick={sendTextManually}
-            disabled={!textInput.trim() || !connected}
+            disabled={!textInput.trim() || sending}
             className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
           >
             Send

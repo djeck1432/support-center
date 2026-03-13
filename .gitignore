@@ -3,8 +3,12 @@ __pycache__/
 *.pyo
 *.db
 .env
+backend/.env
+frontend/.env
 node_modules/
 dist/
 .vite/
 *.log
 .DS_Store
+.vercel/
+backend/venv/

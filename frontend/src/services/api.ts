@@ -1,12 +1,13 @@
 import axios from "axios";
 import type {
+  AIResponse,
   Call,
   CallDetail,
   DashboardStats,
   SupportScript,
 } from "../types";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_URL = import.meta.env.VITE_API_URL || "";
 
 const api = axios.create({ baseURL: API_URL });
 
@@ -19,6 +20,8 @@ export const callsApi = {
   end: (id: number) => api.patch<Call>(`/api/calls/${id}/end`),
   dashboard: () => api.get<DashboardStats>("/api/calls/dashboard"),
   unresolved: () => api.get<CallDetail[]>("/api/calls/unresolved"),
+  sendMessage: (callId: number, text: string, history: { role: string; content: string }[]) =>
+    api.post<AIResponse>(`/api/calls/${callId}/message`, { text, history }),
 };
 
 export const scriptsApi = {
@@ -32,6 +35,6 @@ export const scriptsApi = {
 };
 
 export function getWsUrl(callId: number): string {
-  const base = API_URL.replace(/^http/, "ws");
+  const base = (API_URL || window.location.origin).replace(/^http/, "ws");
   return `${base}/ws/call/${callId}`;
 }
