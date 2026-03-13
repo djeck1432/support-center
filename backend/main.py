@@ -4,7 +4,7 @@ import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
@@ -16,34 +16,34 @@ from scripts.seed_scripts import seed  # noqa: E402
 _initialized = False
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+async def _ensure_ready() -> None:
+    """Initialize DB and seed scripts (safe to call multiple times)."""
     global _initialized
     if not _initialized:
         await init_db()
         await seed()
         _initialized = True
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await _ensure_ready()
     yield
 
 
 app = FastAPI(title="Call Center API", version="1.0.0", lifespan=lifespan)
 
-allowed_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
 
-vercel_url = os.getenv("VERCEL_URL")
-if vercel_url:
-    allowed_origins.append(f"https://{vercel_url}")
+@app.middleware("http")
+async def ensure_db_middleware(request: Request, call_next):
+    """Fallback for serverless envs where lifespan events may not fire."""
+    await _ensure_ready()
+    return await call_next(request)
 
-vercel_project = os.getenv("VERCEL_PROJECT_PRODUCTION_URL")
-if vercel_project:
-    allowed_origins.append(f"https://{vercel_project}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if os.getenv("VERCEL") else allowed_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

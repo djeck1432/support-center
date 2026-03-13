@@ -11,7 +11,14 @@ from services.script_engine import build_scripts_context, get_all_scripts
 
 load_dotenv()
 
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+_client: AsyncOpenAI | None = None
+
+
+def _get_client() -> AsyncOpenAI:
+    global _client
+    if _client is None:
+        _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return _client
 
 SYSTEM_PROMPT = """You are an AI customer support agent for NetConnect, an internet service provider.
 You have access to the following support scripts that guide your responses.
@@ -62,7 +69,7 @@ async def analyze_and_respond(
     messages.append({"role": "user", "content": customer_text})
 
     try:
-        completion = await client.chat.completions.create(
+        completion = await _get_client().chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
             temperature=0.4,
